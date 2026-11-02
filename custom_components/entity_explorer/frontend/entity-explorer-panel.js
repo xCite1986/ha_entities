@@ -67,22 +67,65 @@ const STYLES = `
 .hist-range button{cursor:pointer;border:1px solid var(--divider-color,#ccc);background:transparent;color:inherit;
   border-radius:14px;padding:4px 12px;font-size:12px;}
 .hist-range button.on{background:var(--primary-color,#03a9f4);color:#fff;border-color:transparent;}
-.chart{width:100%;}
+.chart{width:100%;height:140px;display:block;}
+.chart-wrap{position:relative;}
+.ctip{position:absolute;background:#323232;color:#fff;font-size:11px;padding:4px 8px;border-radius:5px;
+  white-space:nowrap;pointer-events:none;z-index:3;box-shadow:0 2px 6px rgba(0,0,0,.3);}
+.modal-body .chart{height:260px;}
 .stat{display:flex;gap:16px;font-size:12px;color:var(--secondary-text-color,#777);margin-top:6px;flex-wrap:wrap;}
 .tl{display:flex;height:22px;border-radius:5px;overflow:hidden;margin-top:4px;}
 .tl span{height:100%;}
 .tl-leg{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;font-size:12px;}
 .tl-leg i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle;}
-.hist-list{margin-top:10px;font-size:12px;max-height:220px;overflow:auto;}
+.hist-list{margin-top:10px;font-size:12px;max-height:50vh;overflow:auto;}
 .hist-list .hl{display:flex;justify-content:space-between;gap:10px;padding:3px 0;border-top:1px solid var(--divider-color,#f0f0f0);}
 .hist-list .hl .t{color:var(--secondary-text-color,#999);font-variant-numeric:tabular-nums;}
 .muted{color:var(--secondary-text-color,#999);font-size:13px;}
+/* inline toggle for switchable entities */
+.val-wrap{display:flex;align-items:center;gap:8px;justify-content:space-between;}
+.sw{position:relative;width:38px;height:20px;flex:none;border-radius:11px;cursor:pointer;
+  background:var(--switch-unchecked-track-color,#9e9e9e);transition:background .15s;}
+.sw.on{background:var(--primary-color,#03a9f4);}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
+  background:#fff;transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,.3);}
+.sw.on::after{left:20px;}
+.sw.busy{opacity:.5;}
+.row.sel .sw{box-shadow:0 0 0 2px rgba(255,255,255,.4);}
+.detail-toggle{display:inline-block;vertical-align:middle;margin-left:10px;}
+/* toast */
+.toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(10px);
+  background:#323232;color:#fff;padding:10px 16px;border-radius:8px;font-size:13px;z-index:50;
+  box-shadow:0 3px 12px rgba(0,0,0,.35);opacity:0;transition:opacity .2s,transform .2s;pointer-events:none;}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+/* clickable chart hint */
+.hist-click{cursor:pointer;border-radius:6px;}
+.hist-click:hover{background:var(--secondary-background-color,#f3f3f3);}
+/* modal */
+.backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:40;display:flex;
+  align-items:center;justify-content:center;padding:24px;}
+.modal{background:var(--card-background-color,#fff);color:var(--primary-text-color,#212121);
+  border-radius:12px;width:min(900px,96vw);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;
+  box-shadow:0 10px 40px rgba(0,0,0,.4);}
+.modal-head{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--divider-color,#eee);}
+.modal-head .mt{font-size:16px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.modal-head .mclose{cursor:pointer;border:none;background:var(--secondary-background-color,#eee);color:inherit;
+  border-radius:6px;padding:4px 10px;font-size:14px;}
+.modal-body{padding:16px 18px;overflow:auto;}
+.modal-body .chart{height:260px;}
+.modal-table{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px;}
+.modal-table th,.modal-table td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--divider-color,#f0f0f0);}
+.modal-table th{position:sticky;top:0;background:var(--card-background-color,#fff);color:var(--secondary-text-color,#888);}
+.modal-table td.t{color:var(--secondary-text-color,#999);white-space:nowrap;font-variant-numeric:tabular-nums;}
 @media (max-width:760px){.detail{position:fixed;inset:0;width:100%;max-width:100%;z-index:10;}
   .cols,.row{grid-template-columns:1fr 84px;}
   .cols .c-room,.cols .c-type,.row .c-room,.row .c-type{display:none;}}
 `;
 
 const PALETTE = ["#039be5", "#43a047", "#fb8c00", "#8e24aa", "#e53935", "#00897b", "#6d4c41", "#3949ab", "#c0ca33", "#d81b60"];
+const TOGGLE_DOMAINS = new Set([
+  "switch", "light", "input_boolean", "fan", "siren", "humidifier",
+  "automation", "script", "remote", "switch_as_x",
+]);
 
 class EntityExplorerPanel extends HTMLElement {
   constructor() {
@@ -94,9 +137,10 @@ class EntityExplorerPanel extends HTMLElement {
     this._groupBy = "platform";
     this._open = new Set();
     this._selected = null;
-    this._valueCells = new Map();
+    this._valueNodes = new Map();
     this._histRange = 24;
     this._updTimer = null;
+    this._histPoints = [];
   }
 
   set hass(hass) {
@@ -205,7 +249,7 @@ class EntityExplorerPanel extends HTMLElement {
   _render() {
     const list = this.shadowRoot.getElementById("list");
     const models = this._allModels().filter((m) => this._match(m));
-    this._valueCells.clear();
+    this._valueNodes.clear();
 
     this.shadowRoot.getElementById("count").textContent =
       `${models.length} Entitäten`;
@@ -260,8 +304,19 @@ class EntityExplorerPanel extends HTMLElement {
     const typ = m.deviceClass ? `${m.domain} · ${m.deviceClass}` : m.domain;
     const valCell = document.createElement("div");
     valCell.className = "cell val";
-    valCell.innerHTML = this._valHtml(m);
-    this._valueCells.set(m.id, valCell);
+    const vwrap = document.createElement("div");
+    vwrap.className = "val-wrap";
+    const vtext = document.createElement("span");
+    vtext.className = "vtext";
+    vtext.innerHTML = this._valHtml(m);
+    vwrap.appendChild(vtext);
+    let sw = null;
+    if (TOGGLE_DOMAINS.has(m.domain)) {
+      sw = this._makeToggle(m.id, m.state);
+      vwrap.appendChild(sw);
+    }
+    valCell.appendChild(vwrap);
+    this._valueNodes.set(m.id, { text: vtext, sw });
     const nm = document.createElement("div");
     nm.className = "nm";
     nm.innerHTML = `<div class="fn">${this._esc(m.name)}</div><div class="id">${this._esc(m.id)}</div>`;
@@ -294,12 +349,54 @@ class EntityExplorerPanel extends HTMLElement {
 
   _updateValues() {
     if (!this._hass) return;
-    for (const [id, cell] of this._valueCells) {
+    for (const [id, nodes] of this._valueNodes) {
       const m = this._model(id);
       const html = this._valHtml(m);
-      if (cell.innerHTML !== html) cell.innerHTML = html;
+      if (nodes.text.innerHTML !== html) nodes.text.innerHTML = html;
+      if (nodes.sw && !nodes.sw.classList.contains("busy")) {
+        nodes.sw.classList.toggle("on", this._isOn(m.state));
+      }
     }
     if (this._selected) this._refreshDetailState();
+  }
+
+  _isOn(state) {
+    return String(state).toLowerCase() === "on";
+  }
+
+  _makeToggle(id, state) {
+    const sw = document.createElement("div");
+    sw.className = "sw" + (this._isOn(state) ? " on" : "");
+    sw.title = "Direkt umschalten";
+    sw.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this._toggle(id, sw);
+    });
+    return sw;
+  }
+
+  async _toggle(id, sw) {
+    sw.classList.add("busy");
+    sw.classList.toggle("on");
+    try {
+      await this._hass.callService("homeassistant", "toggle", { entity_id: id });
+    } catch (e) {
+      this._toast("Schalten fehlgeschlagen");
+    }
+    setTimeout(() => sw.classList.remove("busy"), 500);
+  }
+
+  _toast(msg) {
+    let t = this.shadowRoot.querySelector(".toast");
+    if (!t) {
+      t = document.createElement("div");
+      t.className = "toast";
+      this.shadowRoot.appendChild(t);
+    }
+    t.textContent = msg;
+    requestAnimationFrame(() => t.classList.add("show"));
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => t.classList.remove("show"), 1800);
   }
 
   // --- Detail -----------------------------------------------------------
@@ -343,7 +440,7 @@ class EntityExplorerPanel extends HTMLElement {
         <div class="di"><code>${this._esc(id)}</code><button class="copy" id="dcopy">kopieren</button></div>
       </div>
       <div class="detail-body">
-        <div class="bigval" id="dstate">${this._esc(String(m.state))}${u}</div>
+        <div class="bigval"><span id="dstate">${this._esc(String(m.state))}${u}</span><span class="detail-toggle" id="dtoggle"></span></div>
         <div class="kv">
           <div class="k">Domäne</div><div class="v">${this._esc(m.domain)}</div>
           <div class="k">Geräteklasse</div><div class="v">${this._esc(m.deviceClass || "—")}</div>
@@ -364,8 +461,19 @@ class EntityExplorerPanel extends HTMLElement {
 
     detail.querySelector("#dclose").addEventListener("click", () => this._closeDetail());
     detail.querySelector("#dcopy").addEventListener("click", () => {
-      try { navigator.clipboard.writeText(id); } catch (e) { /* ignore */ }
+      try {
+        navigator.clipboard.writeText(id);
+        this._toast("Entitäts-ID kopiert");
+      } catch (e) {
+        this._toast("Kopieren nicht möglich");
+      }
     });
+    this._detailToggle = null;
+    if (TOGGLE_DOMAINS.has(m.domain)) {
+      const sw = this._makeToggle(id, m.state);
+      detail.querySelector("#dtoggle").appendChild(sw);
+      this._detailToggle = sw;
+    }
     const range = detail.querySelector("#drange");
     range.querySelectorAll("button").forEach((b) => {
       if (Number(b.dataset.h) === this._histRange) b.classList.add("on");
@@ -387,6 +495,9 @@ class EntityExplorerPanel extends HTMLElement {
     if (el) el.innerHTML = `${this._esc(String(m.state))}${m.unit ? ` <span class="u">${this._esc(m.unit)}</span>` : ""}`;
     const lc = this.shadowRoot.getElementById("dlc");
     if (lc) lc.textContent = this._fmtTime(st.last_changed);
+    if (this._detailToggle && !this._detailToggle.classList.contains("busy")) {
+      this._detailToggle.classList.toggle("on", this._isOn(m.state));
+    }
   }
 
   async _loadAndRenderHistory(id) {
@@ -403,12 +514,55 @@ class EntityExplorerPanel extends HTMLElement {
       host.innerHTML = '<div class="muted">Keine Daten im Zeitraum.</div>';
       return;
     }
+    this._histPoints = points;
+    this._histId = id;
+    host.innerHTML = "";
+    host.classList.add("hist-click");
+    host.title = "Zum Vergrößern klicken";
+    this._renderHistory(host, points, 140);
+    host.onclick = (e) => {
+      if (e.target.closest("a,button,input")) return;
+      this._openHistModal(id);
+    };
+  }
+
+  _renderHistory(hostEl, points, height) {
     const numeric = points.filter((p) => p.num != null);
-    if (numeric.length >= 2 && numeric.length >= points.length * 0.6) {
-      host.innerHTML = this._numericChart(numeric);
-    } else {
-      host.innerHTML = this._stateTimeline(points);
-    }
+    const isNum = numeric.length >= 2 && numeric.length >= points.length * 0.6;
+    if (isNum) this._renderChartInto(hostEl, numeric, height);
+    else this._renderTimelineInto(hostEl, points);
+  }
+
+  _openHistModal(id) {
+    const pts = this._histPoints || [];
+    if (!pts.length) return;
+    const m = this._model(id);
+    const backdrop = document.createElement("div");
+    backdrop.className = "backdrop";
+    backdrop.innerHTML = `
+      <div class="modal">
+        <div class="modal-head">
+          <span class="mt">${this._esc(m.name)} — Verlauf (${this._histRange} h)</span>
+          <button class="mclose">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="mchart"></div>
+          <table class="modal-table"><thead><tr><th>Wert</th><th>Zeit</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>`;
+    this._renderHistory(backdrop.querySelector(".mchart"), pts, 260);
+    backdrop.querySelector(".modal-table tbody").innerHTML = [...pts].reverse().map((p) =>
+      `<tr><td>${this._esc(p.state)}${m.unit ? " " + this._esc(m.unit) : ""}</td><td class="t">${this._esc(this._fmtTime(new Date(p.ts).toISOString()))}</td></tr>`
+    ).join("");
+    const close = () => {
+      backdrop.remove();
+      document.removeEventListener("keydown", onKey);
+    };
+    const onKey = (e) => { if (e.key === "Escape") close(); };
+    backdrop.addEventListener("click", (e) => { if (e.target === backdrop) close(); });
+    backdrop.querySelector(".mclose").addEventListener("click", close);
+    document.addEventListener("keydown", onKey);
+    this.shadowRoot.appendChild(backdrop);
   }
 
   async _loadHistory(id, hours) {
@@ -435,34 +589,72 @@ class EntityExplorerPanel extends HTMLElement {
     }
   }
 
-  _numericChart(pts) {
-    const W = 380, H = 130, pad = 22;
+  _renderChartInto(hostEl, pts, height) {
+    const W = 400, H = height || 140, pad = 24;
     const xs = pts.map((p) => p.ts);
     const ys = pts.map((p) => p.num);
     const minX = Math.min(...xs), maxX = Math.max(...xs);
     let minY = Math.min(...ys), maxY = Math.max(...ys);
     if (minY === maxY) { minY -= 1; maxY += 1; }
-    const sx = (x) => pad + ((x - minX) / (maxX - minX || 1)) * (W - pad - 6);
-    const sy = (y) => H - pad - ((y - minY) / (maxY - minY || 1)) * (H - pad - 6);
+    const sx = (x) => pad + ((x - minX) / (maxX - minX || 1)) * (W - pad - 8);
+    const sy = (y) => H - pad - ((y - minY) / (maxY - minY || 1)) * (H - pad - 8);
     const d = pts.map((p, i) => `${i ? "L" : "M"}${sx(p.ts).toFixed(1)},${sy(p.num).toFixed(1)}`).join(" ");
     const last = ys[ys.length - 1];
     const avg = ys.reduce((a, b) => a + b, 0) / ys.length;
-    const grid = `<line x1="${pad}" y1="${H - pad}" x2="${W}" y2="${H - pad}" stroke="var(--divider-color,#ddd)"/>
-      <line x1="${pad}" y1="6" x2="${pad}" y2="${H - pad}" stroke="var(--divider-color,#ddd)"/>`;
-    return `
-      <svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="height:140px">
-        ${grid}
+
+    const wrap = document.createElement("div");
+    wrap.className = "chart-wrap";
+    wrap.innerHTML = `
+      <svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="height:${H}px">
+        <line x1="${pad}" y1="${H - pad}" x2="${W}" y2="${H - pad}" stroke="var(--divider-color,#ddd)"/>
+        <line x1="${pad}" y1="6" x2="${pad}" y2="${H - pad}" stroke="var(--divider-color,#ddd)"/>
         <text x="2" y="12" font-size="9" fill="var(--secondary-text-color,#999)">${this._num(maxY)}</text>
         <text x="2" y="${H - pad}" font-size="9" fill="var(--secondary-text-color,#999)">${this._num(minY)}</text>
         <path d="${d}" fill="none" stroke="var(--primary-color,#039be5)" stroke-width="2"/>
+        <line class="ccursor" x1="0" y1="6" x2="0" y2="${H - pad}" stroke="var(--secondary-text-color,#999)" stroke-dasharray="3 3" style="display:none"/>
+        <circle class="cmarker" r="3.5" fill="var(--primary-color,#039be5)" stroke="#fff" stroke-width="1" style="display:none"/>
       </svg>
-      <div class="stat">
-        <span>Min ${this._num(minY)}</span><span>Max ${this._num(maxY)}</span>
-        <span>Ø ${this._num(avg)}</span><span>Jetzt ${this._num(last)}</span>
-      </div>`;
+      <div class="ctip" style="display:none"></div>`;
+    const stat = document.createElement("div");
+    stat.className = "stat";
+    stat.innerHTML = `<span>Min ${this._num(minY)}</span><span>Max ${this._num(maxY)}</span><span>Ø ${this._num(avg)}</span><span>Jetzt ${this._num(last)}</span>`;
+    hostEl.appendChild(wrap);
+    hostEl.appendChild(stat);
+
+    const unit = this._histId && this._model(this._histId).unit
+      ? " " + this._esc(this._model(this._histId).unit) : "";
+    const svg = wrap.querySelector("svg");
+    const cursor = wrap.querySelector(".ccursor");
+    const marker = wrap.querySelector(".cmarker");
+    const tip = wrap.querySelector(".ctip");
+    const move = (e) => {
+      const r = svg.getBoundingClientRect();
+      if (!r.width) return;
+      const px = ((e.clientX - r.left) / r.width) * W;
+      let best = 0, bd = Infinity;
+      for (let i = 0; i < pts.length; i++) {
+        const dd = Math.abs(sx(pts[i].ts) - px);
+        if (dd < bd) { bd = dd; best = i; }
+      }
+      const p = pts[best], cx = sx(p.ts), cy = sy(p.num);
+      cursor.setAttribute("x1", cx); cursor.setAttribute("x2", cx); cursor.style.display = "";
+      marker.setAttribute("cx", cx); marker.setAttribute("cy", cy); marker.style.display = "";
+      tip.style.display = "";
+      tip.innerHTML = `<b>${this._num(p.num)}${unit}</b> · ${this._esc(this._fmtTime(new Date(p.ts).toISOString()))}`;
+      const leftPx = (cx / W) * r.width;
+      const tw = tip.offsetWidth || 120;
+      tip.style.left = Math.max(2, Math.min(leftPx - tw / 2, r.width - tw - 2)) + "px";
+      tip.style.top = Math.max(0, (cy / H) * r.height - 30) + "px";
+    };
+    svg.addEventListener("mousemove", move);
+    svg.addEventListener("mouseleave", () => {
+      cursor.style.display = "none";
+      marker.style.display = "none";
+      tip.style.display = "none";
+    });
   }
 
-  _stateTimeline(pts) {
+  _renderTimelineInto(hostEl, pts) {
     const end = Date.now();
     const start = pts[0].ts;
     const span = Math.max(1, end - start);
@@ -475,14 +667,15 @@ class EntityExplorerPanel extends HTMLElement {
       const b = i + 1 < pts.length ? pts[i + 1].ts : end;
       const w = ((b - a) / span) * 100;
       if (w <= 0) continue;
-      seg += `<span style="width:${w}%;background:${col(pts[i].state)}" title="${this._esc(pts[i].state)}"></span>`;
+      seg += `<span style="width:${w}%;background:${col(pts[i].state)}" title="${this._esc(pts[i].state)} — ${this._esc(this._fmtTime(new Date(a).toISOString()))}"></span>`;
     }
-    const states = Object.keys(colorOf);
-    const legend = states.map((s) => `<span><i style="background:${colorOf[s]}"></i>${this._esc(s)}</span>`).join("");
-    const recent = pts.slice(-12).reverse().map((p) =>
-      `<div class="hl"><span>${this._esc(p.state)}</span><span class="t">${this._fmtTime(new Date(p.ts).toISOString())}</span></div>`
+    const legend = Object.keys(colorOf).map((s) => `<span><i style="background:${colorOf[s]}"></i>${this._esc(s)}</span>`).join("");
+    const recent = [...pts].reverse().map((p) =>
+      `<div class="hl"><span>${this._esc(p.state)}</span><span class="t">${this._esc(this._fmtTime(new Date(p.ts).toISOString()))}</span></div>`
     ).join("");
-    return `<div class="tl">${seg}</div><div class="tl-leg">${legend}</div><div class="hist-list">${recent}</div>`;
+    const div = document.createElement("div");
+    div.innerHTML = `<div class="tl">${seg}</div><div class="tl-leg">${legend}</div><div class="hist-list">${recent}</div>`;
+    hostEl.appendChild(div);
   }
 
   // --- helpers ----------------------------------------------------------
