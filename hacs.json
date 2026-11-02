@@ -1,0 +1,8 @@
+{
+  "name": "Entity Explorer",
+  "render_readme": true,
+  "homeassistant": "2024.8.0",
+  "zip_release": false,
+  "filename": "entity_explorer",
+  "hide_default_branch": true
+}
