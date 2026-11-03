@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/icon-source.webp" width="160" alt="Entity Explorer" />
+  <img src="custom_components/entity_explorer/brand/icon.png" width="160" alt="Entity Explorer" />
 </p>
 
 # Entity Explorer
