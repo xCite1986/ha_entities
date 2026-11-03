@@ -424,6 +424,36 @@ class EntityExplorerPanel extends HTMLElement {
     setTimeout(() => btn.classList.remove("busy"), 500);
   }
 
+  async _copy(text) {
+    // navigator.clipboard only works in secure contexts (https/localhost); HA is
+    // often served over plain http, so fall back to a temporary textarea.
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (e) {
+      /* fall through to legacy path */
+    }
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.top = "-1000px";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      ta.setSelectionRange(0, text.length);
+      const ok = document.execCommand("copy");
+      ta.remove();
+      return ok;
+    } catch (e) {
+      return false;
+    }
+  }
+
   _toast(msg) {
     let t = this.shadowRoot.querySelector(".toast");
     if (!t) {
@@ -498,13 +528,9 @@ class EntityExplorerPanel extends HTMLElement {
       </div>`;
 
     detail.querySelector("#dclose").addEventListener("click", () => this._closeDetail());
-    detail.querySelector("#dcopy").addEventListener("click", () => {
-      try {
-        navigator.clipboard.writeText(id);
-        this._toast("Entitäts-ID kopiert");
-      } catch (e) {
-        this._toast("Kopieren nicht möglich");
-      }
+    detail.querySelector("#dcopy").addEventListener("click", async () => {
+      const ok = await this._copy(id);
+      this._toast(ok ? "Entitäts-ID kopiert" : "Kopieren nicht möglich");
     });
     this._detailToggle = null;
     if (TOGGLE_DOMAINS.has(m.domain)) {
