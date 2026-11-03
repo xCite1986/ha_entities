@@ -90,6 +90,12 @@ const STYLES = `
   background:#fff;transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,.3);}
 .sw.on::after{left:20px;}
 .sw.busy{opacity:.5;}
+.press-btn{flex:none;cursor:pointer;border:none;border-radius:12px;padding:4px 12px;font-size:12px;
+  background:var(--primary-color,#03a9f4);color:#fff;white-space:nowrap;}
+.press-btn:hover{filter:brightness(1.08);}
+.press-btn:active{transform:scale(.96);}
+.press-btn.busy{opacity:.5;}
+.row.sel .press-btn{background:rgba(255,255,255,.3);}
 .row.sel .sw{box-shadow:0 0 0 2px rgba(255,255,255,.4);}
 .detail-toggle{display:inline-block;vertical-align:middle;margin-left:10px;}
 /* toast */
@@ -126,6 +132,8 @@ const TOGGLE_DOMAINS = new Set([
   "switch", "light", "input_boolean", "fan", "siren", "humidifier",
   "automation", "script", "remote", "switch_as_x",
 ]);
+// Entities that are "pressed"/activated rather than toggled.
+const PRESS_DOMAINS = new Set(["button", "input_button", "scene"]);
 
 class EntityExplorerPanel extends HTMLElement {
   constructor() {
@@ -314,6 +322,8 @@ class EntityExplorerPanel extends HTMLElement {
     if (TOGGLE_DOMAINS.has(m.domain)) {
       sw = this._makeToggle(m.id, m.state);
       vwrap.appendChild(sw);
+    } else if (PRESS_DOMAINS.has(m.domain)) {
+      vwrap.appendChild(this._makePressButton(m.id, m.domain));
     }
     valCell.appendChild(vwrap);
     this._valueNodes.set(m.id, { text: vtext, sw });
@@ -384,6 +394,34 @@ class EntityExplorerPanel extends HTMLElement {
       this._toast("Schalten fehlgeschlagen");
     }
     setTimeout(() => sw.classList.remove("busy"), 500);
+  }
+
+  _makePressButton(id, domain) {
+    const btn = document.createElement("button");
+    btn.className = "press-btn";
+    btn.textContent = domain === "scene" ? "Aktivieren" : "Drücken";
+    btn.title = "Direkt auslösen";
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this._press(id, domain, btn);
+    });
+    return btn;
+  }
+
+  async _press(id, domain, btn) {
+    btn.classList.add("busy");
+    try {
+      if (domain === "scene") {
+        await this._hass.callService("scene", "turn_on", { entity_id: id });
+        this._toast("Szene aktiviert");
+      } else {
+        await this._hass.callService(domain, "press", { entity_id: id });
+        this._toast("Button gedrückt");
+      }
+    } catch (e) {
+      this._toast("Aktion fehlgeschlagen");
+    }
+    setTimeout(() => btn.classList.remove("busy"), 500);
   }
 
   _toast(msg) {
@@ -473,6 +511,8 @@ class EntityExplorerPanel extends HTMLElement {
       const sw = this._makeToggle(id, m.state);
       detail.querySelector("#dtoggle").appendChild(sw);
       this._detailToggle = sw;
+    } else if (PRESS_DOMAINS.has(m.domain)) {
+      detail.querySelector("#dtoggle").appendChild(this._makePressButton(id, m.domain));
     }
     const range = detail.querySelector("#drange");
     range.querySelectorAll("button").forEach((b) => {

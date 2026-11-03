@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/icon-source.webp" width="160" alt="Entity Explorer" />
+</p>
+
 # Entity Explorer
 
 Ein **durchsuchbarer Entitäten-Browser** für **Home Assistant** – inspiriert von
